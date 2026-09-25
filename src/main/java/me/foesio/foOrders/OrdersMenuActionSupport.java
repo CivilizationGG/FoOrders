@@ -5,6 +5,7 @@ import me.foesio.core.gui.EntryBrowserClick;
 import me.foesio.core.gui.EntryBrowserHolder;
 import me.foesio.core.gui.EntryBrowserMenus;
 import me.foesio.core.sound.FoEditorSounds;
+import me.foesio.foOrders.economy.OrderCurrency;
 import me.foesio.foOrders.storage.CustomItemStore;
 import me.foesio.foOrders.storage.HistoryDataStore;
 import me.foesio.foOrders.storage.PlayerDataStore;
@@ -275,16 +276,16 @@ final class OrdersMenuActionSupport {
         return manager.itemSupport.resolveCustomItemDefinition(customItemId);
     }
 
-    private boolean hasEconomyProvider() {
-        return deliverySupport.hasEconomyProvider();
+    private boolean hasEconomyProvider(OrderCurrency currency) {
+        return deliverySupport.hasEconomyProvider(currency);
     }
 
-    private boolean hasEconomyBalance(Player player, double amount) {
-        return deliverySupport.hasEconomyBalance(player, amount);
+    private boolean hasEconomyBalance(Player player, OrderCurrency currency, double amount) {
+        return deliverySupport.hasEconomyBalance(player, currency, amount);
     }
 
-    private boolean withdrawEconomy(Player player, double amount) {
-        return deliverySupport.withdrawEconomy(player, amount);
+    private boolean withdrawEconomy(Player player, OrderCurrency currency, double amount) {
+        return deliverySupport.withdrawEconomy(player, currency, amount);
     }
 
     private void appendOrderHistory(UUID playerId, String action, String details) {
@@ -491,6 +492,7 @@ final class OrdersMenuActionSupport {
     void handleNewOrderClick(Player player, int rawSlot) {
         int inventorySize = 27;
         int cancelSlot = guiItemSlot("new-order.cancel", CANCEL_SLOT, inventorySize);
+        int currencySlot = guiItemSlot("new-order.currency", CURRENCY_SLOT, inventorySize);
         int itemSlot = guiItemSlot("new-order.item", ITEM_SLOT, inventorySize);
         int amountSlot = guiItemSlot("new-order.amount", AMOUNT_SLOT, inventorySize);
         int priceSlot = guiItemSlot("new-order.price", PRICE_SLOT, inventorySize);
@@ -499,6 +501,17 @@ final class OrdersMenuActionSupport {
 
         if (rawSlot == cancelSlot) {
             openYourOrdersMenu(player, GUI_BACK_SOUND);
+            return;
+        }
+
+        if (rawSlot == currencySlot && manager.currencies().hasChoice()) {
+            MenuViewState viewState = menuStates.computeIfAbsent(player.getUniqueId(), ignored -> new MenuViewState());
+            NewOrderDraft draft = viewState.getOrCreateDraft();
+            OrderCurrency current = manager.resolveDraftCurrency(draft);
+            OrderCurrency next = manager.currencies().next(current.id());
+            viewState.draft = draft.withCurrencyId(next.id());
+            manager.playSoundWithPitchVariation(player, GUI_CYCLE_SOUND, 0.04f);
+            openNewOrderMenu(player);
             return;
         }
 
@@ -1109,9 +1122,21 @@ final class OrdersMenuActionSupport {
             return;
         }
 
-        if (!hasEconomyProvider()) {
+        OrderCurrency currency = manager.resolveDraftCurrency(draft);
+        if (!currency.id().equals(draft.currencyId())) {
+            draft = draft.withCurrencyId(currency.id());
+            viewState.draft = draft;
+        }
+        if (!hasEconomyProvider(currency)) {
             manager.playSound(player, GUI_ERROR_SOUND);
-            sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
+            sendErrorActionbar(player, manager.messages().get("actionbar.currency-unavailable", PluginMessages.placeholders("currency", currency.displayName())));
+            openNewOrderMenu(player);
+            return;
+        }
+
+        if (!currency.decimal() && !OrderCurrency.isWholeNumber(draft.pricePerItem())) {
+            manager.playSound(player, GUI_ERROR_SOUND);
+            sendErrorActionbar(player, manager.messages().get("actionbar.whole-number-price", PluginMessages.placeholders("currency", currency.displayName())));
             openNewOrderMenu(player);
             return;
         }
@@ -1123,8 +1148,8 @@ final class OrdersMenuActionSupport {
             openNewOrderMenu(player);
             return;
         }
-        double taxAmount = manager.calculateOrderTax(subtotal);
-        double totalCost = manager.calculateOrderCreationCost(subtotal);
+        double taxAmount = manager.calculateOrderTax(currency, subtotal);
+        double totalCost = manager.calculateOrderCreationCost(currency, subtotal);
         if (totalCost <= 0 || !Double.isFinite(totalCost)) {
             manager.playSound(player, GUI_ERROR_SOUND);
             sendErrorActionbar(player, manager.messages().get("actionbar.invalid-amount"));
@@ -1132,14 +1157,14 @@ final class OrdersMenuActionSupport {
             return;
         }
 
-        if (!hasEconomyBalance(player, totalCost)) {
+        if (!hasEconomyBalance(player, currency, totalCost)) {
             manager.playSound(player, GUI_ERROR_SOUND);
-            sendErrorActionbar(player, manager.messages().get("actionbar.not-enough-money"));
+            sendErrorActionbar(player, manager.messages().get("actionbar.not-enough-money", PluginMessages.placeholders("currency", currency.displayName())));
             openNewOrderMenu(player);
             return;
         }
 
-        if (!withdrawEconomy(player, totalCost)) {
+        if (!withdrawEconomy(player, currency, totalCost)) {
             manager.playSound(player, GUI_ERROR_SOUND);
             sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
             openNewOrderMenu(player);
@@ -1157,33 +1182,40 @@ final class OrdersMenuActionSupport {
             draft.pricePerItem(),
             0,
             false,
-            System.currentTimeMillis()
+            System.currentTimeMillis(),
+            currency.id()
         );
         playerData.getOrders().add(orderEntry);
         playerDataStore.saveUrgent(playerId);
+        String pricePlain = manager.formatAmountPlain(currency, orderEntry.getPricePerItem());
+        String subtotalPlain = manager.formatAmountPlain(currency, subtotal);
+        String taxPlain = manager.formatAmountPlain(currency, taxAmount);
+        String totalPlain = manager.formatAmountPlain(currency, totalCost);
         appendOrderHistory(
             playerId,
             "Order Created",
             formatCompactAmount(orderEntry.getAmountOrdered())
                 + "x " + formatOrderDisplayName(orderEntry)
-                + " at $" + formatCompactAmount(orderEntry.getPricePerItem())
-                + " each (Subtotal $" + formatCompactAmount(subtotal)
-                + ", Tax $" + formatCompactAmount(taxAmount)
-                + ", Total $" + formatCompactAmount(totalCost) + ")"
+                + " at " + pricePlain
+                + " each (Subtotal " + subtotalPlain
+                + ", Tax " + taxPlain
+                + ", Total " + totalPlain + ")"
         );
         manager.fileLogger().info(
             "Player " + player.getName() + " created order " + orderEntry.getOrderId()
                 + " for " + formatCompactAmount(orderEntry.getAmountOrdered())
                 + "x " + formatOrderDisplayName(orderEntry)
-                + " at $" + formatCompactAmount(orderEntry.getPricePerItem())
-                + " each with $" + formatCompactAmount(taxAmount)
-                + " tax and $" + formatCompactAmount(totalCost) + " charged."
+                + " at " + pricePlain
+                + " each in currency " + currency.id()
+                + " with " + taxPlain
+                + " tax and " + totalPlain + " charged."
         );
         sendOrderCreatedWebhook(player, orderEntry, subtotal);
         announceCreatedOrderInChat(player, orderEntry, subtotal);
         manager.playSound(player, ORDER_CREATED_SOUND);
 
-        viewState.draft = NewOrderDraft.defaults();
+        // Keep the chosen currency for the next order; everything else starts fresh.
+        viewState.draft = NewOrderDraft.defaults().withCurrencyId(currency.id());
         openYourOrdersMenu(player);
     }
 }

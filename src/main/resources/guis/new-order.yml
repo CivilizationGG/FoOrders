@@ -1,4 +1,7 @@
 # Public new-order menu.
+# Money placeholders ({price}, {subtotal}, {tax}, {total}) already include the selected currency's
+# format from config.yml. Use {price_raw}, {subtotal_raw}, {tax_raw} or {total_raw} for the bare
+# number and {currency} for the currency name.
 title: "&8ɴᴇᴡ ᴏʀᴅᴇʀ"
 
 items:
@@ -13,6 +16,11 @@ items:
       - "&7&l | &fDiscard this order draft."
       - " "
       - "{good}→ Click to Cancel ←"
+  # Only shown when more than one currency is available. Clicking cycles through the currencies.
+  # The icon is the selected currency's icon from config.yml unless a material is set here.
+  currency:
+    slot: 11
+    name: "{theme}&lCURRENCY"
   item:
     slot: 12
     name: "{theme}&lITEM"
@@ -42,7 +50,7 @@ items:
       - "&8ʙᴜᴛᴛᴏɴ"
       - " "
       - "&eⓘ Information ↓"
-      - "&7&l | &fPrice per item: ${price}"
+      - "&7&l | &fPrice per item: {price}"
       - " "
       - "{good}→ Click to Set Price ←"
   enchants:
@@ -64,8 +72,8 @@ items:
       - "&8ʙᴜᴛᴛᴏɴ"
       - " "
       - "&eⓘ Information ↓"
-      - "&7&l | &fSubtotal: {theme}${subtotal}"
-      - "&7&l | &fTax ({tax_percent}%): {theme}${tax}"
-      - "&7&l | &fTotal: #3ecf8e${total}"
+      - "&7&l | &fSubtotal: {theme}{subtotal}"
+      - "&7&l | &fTax ({tax_percent}%): {theme}{tax}"
+      - "&7&l | &fTotal: #3ecf8e{total}"
       - " "
       - "{good}→ Click to Confirm Order ←"

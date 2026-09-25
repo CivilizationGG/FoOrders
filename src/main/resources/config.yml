@@ -12,6 +12,41 @@ order-menu-refresh-cooldown-ms: 50
 order-tax:
   percentage: 0
 
+# Currencies players can pay orders with. Each order remembers the currency it was created in,
+# so deliverers are paid and refunds are sent in that same currency.
+# The first enabled currency that is available is the default for new orders. When more than one
+# currency is available, the new-order menu shows a currency button that cycles through them.
+# Disabled currencies stay loaded so older orders in them can still be delivered and refunded.
+currencies:
+  # The primary server economy through Vault (always required by FoOrders).
+  # Keep this key named "vault": orders created before currency support use it.
+  vault:
+    enabled: true
+    # vault or excellenteconomy
+    provider: vault
+    # Name shown in the currency button and in {currency} placeholders.
+    name: "Money"
+    # How amounts are shown everywhere ({amount} is the number, {theme} and colour codes are allowed).
+    format: "${amount}"
+    # Item shown on the currency button when this currency is selected.
+    icon: EMERALD
+    # Allow fractional prices such as 0.5.
+    decimal: true
+    # Creation tax for orders in this currency. Set to -1 to use order-tax.percentage.
+    tax-percentage: -1
+  # An ExcellentEconomy currency. Skipped quietly when ExcellentEconomy is not installed.
+  coins:
+    enabled: true
+    provider: excellenteconomy
+    # ExcellentEconomy currency id: the file name in plugins/ExcellentEconomy/currencies/ without .yml.
+    currency-id: coins
+    name: "Coins"
+    format: "{amount} Coins"
+    icon: SUNFLOWER
+    # ExcellentEconomy currencies with "Decimal: false" always reject fractional prices, whatever is set here.
+    decimal: false
+    tax-percentage: -1
+
 # File logging works like debug mode and saves plugin activity to logs/latest.log. Default: false
 file-logging: false
 

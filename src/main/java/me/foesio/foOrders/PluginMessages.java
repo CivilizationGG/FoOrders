@@ -30,6 +30,14 @@ public final class PluginMessages {
     private static final String FILE_NAME = "messages.yml";
     private static final String DEFAULT_THEME_COLOR = "#03fc88";
     private static final Pattern DEFAULT_THEME_COLOR_PATTERN = Pattern.compile("(?i)#03fc88");
+    /**
+     * A literal dollar sign written directly in front of a money placeholder. Money
+     * placeholders now carry the order currency's own format, so the symbol moves
+     * into config.yml (currencies.vault.format) and is removed from the text.
+     */
+    private static final Pattern CURRENCY_SYMBOL_BEFORE_PLACEHOLDER = Pattern.compile(
+        "\\$([{%])(price|price_each|total|paid|paid_left|subtotal|tax|payout|amount)([}%])"
+    );
 
     private final JavaPlugin plugin;
     private YamlConfiguration messages = new YamlConfiguration();
@@ -195,6 +203,46 @@ public final class PluginMessages {
                 return false;
             }
         });
+    }
+
+    /**
+     * Removes the hard-coded "$" in front of money placeholders so the currency
+     * format from config.yml is not doubled ("$$100"). Runs once per install.
+     */
+    public boolean migrateCurrencyPlaceholders(FoMigrationStore store, int version) {
+        File messagesFile = new File(plugin.getDataFolder(), FILE_NAME);
+        return store.runToVersion(version, () -> {
+            boolean changed = false;
+            for (String key : messages.getKeys(true)) {
+                if (messages.isConfigurationSection(key) || !messages.isString(key)) {
+                    continue;
+                }
+                String current = messages.getString(key, "");
+                String migrated = stripCurrencySymbols(current);
+                if (!current.equals(migrated)) {
+                    messages.set(key, migrated);
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                return true;
+            }
+            try {
+                messages.save(messagesFile);
+                plugin.getLogger().info("Removed hard-coded $ signs before money placeholders in messages.yml; the currency format now comes from config.yml.");
+                return true;
+            } catch (IOException exception) {
+                warn("Could not save currency placeholder migration: " + exception.getMessage());
+                return false;
+            }
+        });
+    }
+
+    public static String stripCurrencySymbols(String value) {
+        if (value == null || value.isEmpty()) {
+            return value == null ? "" : value;
+        }
+        return CURRENCY_SYMBOL_BEFORE_PLACEHOLDER.matcher(value).replaceAll("$1$2$3");
     }
 
     public static Map<String, String> placeholders(Object... values) {

@@ -5,6 +5,7 @@ import me.foesio.core.dialog.DialogIcons;
 import me.foesio.core.editor.EditorItemFactory;
 import me.foesio.core.number.LargeNumberParser;
 import me.foesio.core.number.NumberFormatters;
+import me.foesio.foOrders.economy.OrderCurrency;
 import me.foesio.foOrders.storage.CustomItemStore;
 import me.foesio.foOrders.storage.PlayerDataStore;
 import org.bukkit.Bukkit;
@@ -71,13 +72,19 @@ final class OrdersMenuItemSupport {
         String materialName = order.getCustomItemId() == null
             ? formatMaterialName(icon)
             : resolveTemplateDisplayName(item);
+        OrderCurrency currency = manager.currencyFor(order);
         String amount = formatCompactAmount(order.getAmountOrdered());
         String delivered = formatCompactAmount(order.getAmountDelivered());
         String amountLeft = formatCompactAmount(Math.max(0, order.getAmountOrdered() - order.getAmountDelivered()));
-        String price = formatCompactAmount(order.getPricePerItem());
-        String total = formatCompactAmount(order.getTotalCost());
-        String paid = formatCompactAmount(order.getAmountPaid());
-        String paidLeft = formatCompactAmount(Math.max(0D, order.getTotalCost() - order.getAmountPaid()));
+        double paidLeftValue = Math.max(0D, order.getTotalCost() - order.getAmountPaid());
+        String priceRaw = formatCompactAmount(order.getPricePerItem());
+        String totalRaw = formatCompactAmount(order.getTotalCost());
+        String paidRaw = formatCompactAmount(order.getAmountPaid());
+        String paidLeftRaw = formatCompactAmount(paidLeftValue);
+        String price = currency.format(priceRaw);
+        String total = currency.format(totalRaw);
+        String paid = currency.format(paidRaw);
+        String paidLeft = currency.format(paidLeftRaw);
         Map<String, String> placeholders = TextFormat.placeholders(
             "owner", ownerName,
             "item", materialName,
@@ -89,9 +96,14 @@ final class OrdersMenuItemSupport {
             "amount_left", amountLeft,
             "price", price,
             "price_each", price,
+            "price_raw", priceRaw,
             "total", total,
+            "total_raw", totalRaw,
             "paid", paid,
-            "paid_left", paidLeft
+            "paid_raw", paidRaw,
+            "paid_left", paidLeft,
+            "paid_left_raw", paidLeftRaw,
+            "currency", currency.displayName()
         );
 
         meta.setDisplayName(guiText(
@@ -108,7 +120,7 @@ final class OrdersMenuItemSupport {
         ));
         lore.add(guiText(
             "items.main.order-entry.lore.price",
-            ACCENT + "$" + price + " " + WHITE + "each",
+            ACCENT + price + " " + WHITE + "each",
             placeholders
         ));
         lore.add("");
@@ -119,7 +131,7 @@ final class OrdersMenuItemSupport {
         ));
         lore.add(guiText(
             "items.main.order-entry.lore.paid",
-            PROGRESS_LEFT + "$" + paid + "/" + PROGRESS_RIGHT + "$" + total + " " + PROGRESS_LABEL + "Paid",
+            PROGRESS_LEFT + paid + "/" + PROGRESS_RIGHT + total + " " + PROGRESS_LABEL + "Paid",
             placeholders
         ));
         if (showAdminModerationLore) {
@@ -565,6 +577,13 @@ final class OrdersMenuItemSupport {
                 .append(' ')
                 .append(romanLevel);
         }
+
+        OrderCurrency currency = manager.currencyFor(order);
+        searchable
+            .append(' ')
+            .append(currency.id())
+            .append(' ')
+            .append(org.bukkit.ChatColor.stripColor(TextFormat.colorize(currency.displayName())).toLowerCase(Locale.ROOT));
         return searchable.toString();
     }
 

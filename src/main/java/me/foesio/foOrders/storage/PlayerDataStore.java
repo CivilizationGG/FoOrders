@@ -42,6 +42,8 @@ public final class PlayerDataStore {
     private static final String LEGACY_PLAYER_DATA_FOLDER = "playerdata";
     private static final String LEGACY_ARCHIVE_FOLDER = "old-userdata";
     private static final String META_JSON_IMPORT_COMPLETE = "playerdata_json_import_complete";
+    /** Currency id stored on orders created before currency support existed. */
+    public static final String LEGACY_CURRENCY_ID = "vault";
     private static final DateTimeFormatter ARCHIVE_TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     private final Plugin plugin;
@@ -212,7 +214,7 @@ public final class PlayerDataStore {
     private void loadPlayerOrders(Connection connection, Map<UUID, PlayerData> loadedData) throws SQLException {
         try (Statement statement = connection.createStatement();
              ResultSet resultSet = statement.executeQuery(
-                 "SELECT owner_uuid, order_id, custom_item_id, material, enchantments_json, amount_ordered, amount_delivered, amount_claimable, price_per_item, amount_paid, cancelled, created_at_epoch_millis " +
+                 "SELECT owner_uuid, order_id, custom_item_id, material, enchantments_json, amount_ordered, amount_delivered, amount_claimable, price_per_item, amount_paid, cancelled, created_at_epoch_millis, currency " +
                      "FROM player_orders ORDER BY created_at_epoch_millis ASC, order_id ASC"
              )) {
             while (resultSet.next()) {
@@ -311,13 +313,30 @@ public final class PlayerDataStore {
                     amount_paid REAL NOT NULL,
                     cancelled INTEGER NOT NULL DEFAULT 0,
                     created_at_epoch_millis INTEGER NOT NULL DEFAULT 0,
+                    currency TEXT NOT NULL DEFAULT 'vault',
                     FOREIGN KEY(owner_uuid) REFERENCES player_settings(player_uuid) ON DELETE CASCADE
                 )
                 """);
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_player_orders_owner ON player_orders(owner_uuid)");
+            addColumnIfMissing(connection, "player_orders", "currency", "TEXT NOT NULL DEFAULT 'vault'");
         } catch (SQLException exception) {
             throw new IllegalStateException("Could not initialize FoOrders SQLite database", exception);
         }
+    }
+
+    private void addColumnIfMissing(Connection connection, String table, String column, String definition) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (resultSet.next()) {
+                if (column.equalsIgnoreCase(resultSet.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        }
+        plugin.getLogger().info("Added column '" + column + "' to " + table + " for order currency support.");
     }
 
     private void migrateLegacyJsonIfNeeded() {
@@ -386,7 +405,7 @@ public final class PlayerDataStore {
             }
         }
         try (PreparedStatement statement = connection.prepareStatement(
-            "SELECT order_id, custom_item_id, material, enchantments_json, amount_ordered, amount_delivered, amount_claimable, price_per_item, amount_paid, cancelled, created_at_epoch_millis " +
+            "SELECT order_id, custom_item_id, material, enchantments_json, amount_ordered, amount_delivered, amount_claimable, price_per_item, amount_paid, cancelled, created_at_epoch_millis, currency " +
                 "FROM player_orders WHERE owner_uuid = ? ORDER BY created_at_epoch_millis ASC, order_id ASC"
         )) {
             statement.setString(1, playerId.toString());
@@ -452,8 +471,9 @@ public final class PlayerDataStore {
                 price_per_item,
                 amount_paid,
                 cancelled,
-                created_at_epoch_millis
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at_epoch_millis,
+                currency
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """)) {
             for (OrderEntry order : data.getOrders()) {
                 statement.setString(1, order.getOrderId());
@@ -468,6 +488,7 @@ public final class PlayerDataStore {
                 statement.setDouble(10, order.getAmountPaid());
                 statement.setInt(11, order.isCancelled() ? 1 : 0);
                 statement.setLong(12, order.getCreatedAtEpochMillis());
+                statement.setString(13, order.getCurrency());
                 statement.addBatch();
             }
             statement.executeBatch();
@@ -486,7 +507,8 @@ public final class PlayerDataStore {
             resultSet.getDouble("price_per_item"),
             resultSet.getDouble("amount_paid"),
             resultSet.getInt("cancelled") != 0,
-            resultSet.getLong("created_at_epoch_millis")
+            resultSet.getLong("created_at_epoch_millis"),
+            resultSet.getString("currency")
         );
     }
 
@@ -698,6 +720,7 @@ public final class PlayerDataStore {
         private double amountPaid;
         private boolean cancelled;
         private long createdAtEpochMillis;
+        private String currency;
 
         public OrderEntry() {
         }
@@ -730,6 +753,23 @@ public final class PlayerDataStore {
             boolean cancelled,
             long createdAtEpochMillis
         ) {
+            this(orderId, customItemId, material, enchantments, amountOrdered, amountDelivered, amountClaimable, pricePerItem, amountPaid, cancelled, createdAtEpochMillis, LEGACY_CURRENCY_ID);
+        }
+
+        public OrderEntry(
+            String orderId,
+            String customItemId,
+            String material,
+            Map<String, Integer> enchantments,
+            int amountOrdered,
+            int amountDelivered,
+            int amountClaimable,
+            double pricePerItem,
+            double amountPaid,
+            boolean cancelled,
+            long createdAtEpochMillis,
+            String currency
+        ) {
             this.orderId = orderId;
             this.customItemId = customItemId;
             this.material = material;
@@ -741,7 +781,17 @@ public final class PlayerDataStore {
             this.amountPaid = amountPaid;
             this.cancelled = cancelled;
             this.createdAtEpochMillis = createdAtEpochMillis;
+            this.currency = currency;
             sanitize();
+        }
+
+        /** Id of the currency this order is priced and paid in. Never null after sanitizing. */
+        public String getCurrency() {
+            return currency == null || currency.isBlank() ? LEGACY_CURRENCY_ID : currency;
+        }
+
+        public void setCurrency(String currency) {
+            this.currency = currency;
         }
 
         public String getOrderId() {
@@ -933,6 +983,14 @@ public final class PlayerDataStore {
                 createdAtEpochMillis = 0;
                 changed = true;
             }
+            String originalCurrency = currency;
+            currency = currency == null ? "" : currency.trim().toLowerCase(Locale.ROOT);
+            if (currency.isBlank()) {
+                currency = LEGACY_CURRENCY_ID;
+            }
+            if (!Objects.equals(originalCurrency, currency)) {
+                changed = true;
+            }
             return changed;
         }
 
@@ -948,7 +1006,8 @@ public final class PlayerDataStore {
                 pricePerItem,
                 amountPaid,
                 cancelled,
-                createdAtEpochMillis
+                createdAtEpochMillis,
+                currency
             );
         }
     }

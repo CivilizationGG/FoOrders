@@ -11,6 +11,7 @@ import me.foesio.foOrders.dialog.EnchantDialogAction;
 import me.foesio.foOrders.dialog.EnchantDialogRequest;
 import me.foesio.foOrders.dialog.EnchantDialogRow;
 import me.foesio.foOrders.dialog.FoOrdersDialogInputService;
+import me.foesio.foOrders.economy.OrderCurrency;
 import me.foesio.foOrders.storage.CustomItemStore;
 import me.foesio.foOrders.storage.HistoryDataStore;
 import me.foesio.foOrders.storage.PlayerDataStore;
@@ -546,6 +547,7 @@ final class OrdersMenuViewSupport {
 
         int inventorySize = 27;
         int cancelSlot = guiItemSlot("new-order.cancel", CANCEL_SLOT, inventorySize);
+        int currencySlot = guiItemSlot("new-order.currency", CURRENCY_SLOT, inventorySize);
         int itemSlot = guiItemSlot("new-order.item", ITEM_SLOT, inventorySize);
         int amountSlot = guiItemSlot("new-order.amount", AMOUNT_SLOT, inventorySize);
         int priceSlot = guiItemSlot("new-order.price", PRICE_SLOT, inventorySize);
@@ -554,6 +556,33 @@ final class OrdersMenuViewSupport {
 
         Inventory menu = createMenu(MenuType.NEW_ORDER, inventorySize, guiTitle("new-order", TITLE_NEW_ORDER));
         menu.setItem(cancelSlot, createGuiItem("new-order.cancel", Material.RED_STAINED_GLASS_PANE, CANCEL_RED + "ᴄᴀɴᴄᴇʟ", List.of(WHITE + "Click to return")));
+
+        OrderCurrency currency = manager.resolveDraftCurrency(draft);
+        if (!currency.id().equals(draft.currencyId())) {
+            draft = draft.withCurrencyId(currency.id());
+            viewState.draft = draft;
+        }
+        List<OrderCurrency> selectableCurrencies = manager.currencies().selectable();
+        if (selectableCurrencies.size() > 1) {
+            List<String> currencyOptions = new ArrayList<>(selectableCurrencies.size());
+            int selectedCurrencyIndex = 0;
+            for (int index = 0; index < selectableCurrencies.size(); index++) {
+                OrderCurrency option = selectableCurrencies.get(index);
+                currencyOptions.add(option.displayName());
+                if (option.id().equals(currency.id())) {
+                    selectedCurrencyIndex = index;
+                }
+            }
+            menu.setItem(currencySlot, createGuiCyclingItem(
+                "new-order.currency",
+                currency.icon(),
+                LIGHT_ACCENT + "ᴄᴜʀʀᴇɴᴄʏ",
+                currencyOptions,
+                selectedCurrencyIndex,
+                LIGHT_ACCENT,
+                WHITE
+            ));
+        }
 
         CustomItemStore.CustomItemDefinition customSelection = resolveCustomItemDefinition(draft.customItemId());
         if (draft.customItemId() != null && customSelection == null) {
@@ -589,8 +618,12 @@ final class OrdersMenuViewSupport {
         ), TextFormat.placeholders("amount", formatCompactAmount(draft.amount()))));
         menu.setItem(priceSlot, createGuiItem("new-order.price", Material.EMERALD, LIGHT_ACCENT + "ᴘʀɪᴄᴇ", List.of(
             WHITE + "Click to type the price per item",
-            MUTED + "($" + formatCompactAmount(draft.pricePerItem()) + ")"
-        ), TextFormat.placeholders("price", formatCompactAmount(draft.pricePerItem()))));
+            MUTED + "(" + manager.formatAmount(currency, draft.pricePerItem()) + ")"
+        ), TextFormat.placeholders(
+            "price", manager.formatAmount(currency, draft.pricePerItem()),
+            "price_raw", formatCompactAmount(draft.pricePerItem()),
+            "currency", currency.displayName()
+        )));
 
         if (supportsOrderEnchantments(draft.customItemId(), selectedMaterial)) {
             List<String> enchantLore = new ArrayList<>();
@@ -602,22 +635,26 @@ final class OrdersMenuViewSupport {
         }
 
         double subtotal = draft.amount() * draft.pricePerItem();
-        double tax = manager.calculateOrderTax(subtotal);
-        double total = manager.calculateOrderCreationCost(subtotal);
-        String taxPercent = formatTaxPercentage(manager.orderTaxPercentage);
+        double tax = manager.calculateOrderTax(currency, subtotal);
+        double total = manager.calculateOrderCreationCost(currency, subtotal);
+        String taxPercent = formatTaxPercentage(manager.orderTaxPercentage(currency));
         List<String> hiddenTaxLore = tax <= 0D ? List.of("tax", "tax_percent") : List.of();
         List<String> confirmLore = new ArrayList<>();
         confirmLore.add(WHITE + "Click to confirm order");
-        confirmLore.add(MUTED + "Subtotal: " + ACCENT + "$" + formatCompactAmount(subtotal));
+        confirmLore.add(MUTED + "Subtotal: " + ACCENT + manager.formatAmount(currency, subtotal));
         if (tax > 0D) {
-            confirmLore.add(MUTED + "Tax (" + taxPercent + "%): " + ACCENT + "$" + formatCompactAmount(tax));
+            confirmLore.add(MUTED + "Tax (" + taxPercent + "%): " + ACCENT + manager.formatAmount(currency, tax));
         }
-        confirmLore.add(MUTED + "Total: " + CONFIRM_GREEN + "$" + formatCompactAmount(total));
+        confirmLore.add(MUTED + "Total: " + CONFIRM_GREEN + manager.formatAmount(currency, total));
         menu.setItem(confirmSlot, createGuiItem("new-order.confirm", Material.LIME_STAINED_GLASS_PANE, CONFIRM_GREEN + "ᴄᴏɴꜰɪʀᴍ", confirmLore, TextFormat.placeholders(
-            "subtotal", formatCompactAmount(subtotal),
+            "subtotal", manager.formatAmount(currency, subtotal),
+            "subtotal_raw", formatCompactAmount(subtotal),
             "tax_percent", taxPercent,
-            "tax", formatCompactAmount(tax),
-            "total", formatCompactAmount(total)
+            "tax", manager.formatAmount(currency, tax),
+            "tax_raw", formatCompactAmount(tax),
+            "total", manager.formatAmount(currency, total),
+            "total_raw", formatCompactAmount(total),
+            "currency", currency.displayName()
         ), hiddenTaxLore));
 
         openMenu(player, menu, transitionSound);
@@ -936,7 +973,7 @@ final class OrdersMenuViewSupport {
                     List.of(
                         WHITE + "Open admin moderation for this order",
                         remainingFunds > 0D
-                            ? WHITE + "Refund owner: " + ACCENT + "$" + formatCompactAmount(remainingFunds)
+                            ? WHITE + "Refund owner: " + ACCENT + manager.formatAmount(manager.currencyFor(order), remainingFunds)
                             : MUTED + "No refund remaining"
                     )
                 )
@@ -1018,6 +1055,7 @@ final class OrdersMenuViewSupport {
         viewState.adminTargetOrderId = orderId;
 
         double remainingFunds = getRemainingOrderFunds(order);
+        String refundText = manager.formatAmount(manager.currencyFor(order), remainingFunds);
         String ownerName = resolvePlayerName(ownerId);
         Inventory menu = createMenu(MenuType.ADMIN_ORDER_ACTIONS, 27, TITLE_ADMIN_ACTIONS);
         menu.setItem(ADMIN_PREVIEW_SLOT, createOrderItem(ownerName, order, false));
@@ -1026,7 +1064,7 @@ final class OrdersMenuViewSupport {
             createSimpleItem(Material.LAVA_BUCKET, CANCEL_RED + "ᴅᴇʟᴇᴛᴇ ᴏʀᴅᴇʀ", List.of(
                 WHITE + "Delete order and all claimable items",
                 remainingFunds > 0D
-                    ? WHITE + "Refund owner: " + ACCENT + "$" + formatCompactAmount(remainingFunds)
+                    ? WHITE + "Refund owner: " + ACCENT + refundText
                     : MUTED + "No refund remaining"
             ))
         );
@@ -1040,7 +1078,7 @@ final class OrdersMenuViewSupport {
                     : List.of(
                         WHITE + "Cancel order and keep claimable items",
                         remainingFunds > 0D
-                            ? WHITE + "Refund owner: " + ACCENT + "$" + formatCompactAmount(remainingFunds)
+                            ? WHITE + "Refund owner: " + ACCENT + refundText
                             : MUTED + "No refund remaining"
                     )
             )

@@ -2,6 +2,7 @@ package me.foesio.foOrders;
 
 import me.foesio.core.inventory.InventoryCloseSuppressor;
 import me.foesio.foOrders.dialog.FoOrdersDialogInputService;
+import me.foesio.foOrders.economy.OrderCurrency;
 import me.foesio.core.scheduler.FoScheduler;
 import me.foesio.foOrders.storage.HistoryDataStore;
 import me.foesio.foOrders.storage.PlayerDataStore;
@@ -64,10 +65,17 @@ final class OrdersMenuInputSupport {
             }
             case PRICE -> {
                 NewOrderDraft draft = viewState.getOrCreateDraft();
+                OrderCurrency currency = manager.resolveDraftCurrency(draft);
                 double parsedPrice = manager.itemSupport.parsePositiveDouble(rawValue);
                 if (parsedPrice <= 0) {
                     draft = draft.withPricePerItem(1);
                     interaction.sendInvalidAmountActionbar(player);
+                } else if (!currency.decimal() && !OrderCurrency.isWholeNumber(parsedPrice)) {
+                    // Keep the previous price; whole-number currencies cannot hold fractions.
+                    interaction.sendErrorActionbar(player, manager.messages().get(
+                        "actionbar.whole-number-price",
+                        PluginMessages.placeholders("currency", currency.displayName())
+                    ));
                 } else {
                     draft = draft.withPricePerItem(parsedPrice);
                 }

@@ -31,7 +31,9 @@ import org.bukkit.configuration.Configuration;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -40,6 +42,9 @@ public final class FoOrders extends JavaPlugin {
     private static final String LEGACY_PLUGIN_TITLE_PATH = "plugin-title";
     private static final String MODRINTH_PROJECT_ID = "foorders";
     private static final int BSTATS_PLUGIN_ID = 32420;
+    // Runs after GuiConfigManager's migrations (10, 11, 13) because the migration
+    // store only moves forward; see GuiConfigManager for the GUI half.
+    private static final int MESSAGES_CURRENCY_PLACEHOLDER_MIGRATION_VERSION = 14;
 
     private OrdersMenuManager ordersMenuManager;
     private PluginMessages messages;
@@ -71,6 +76,7 @@ public final class FoOrders extends JavaPlugin {
         messages.migratePrefix(core.migrations(), 2);
         guiConfigManager = new GuiConfigManager(this, core.migrations());
         guiConfigManager.reload();
+        messages.migrateCurrencyPlaceholders(core.migrations(), MESSAGES_CURRENCY_PLACEHOLDER_MIGRATION_VERSION);
         FoScheduler schedulerAdapter = core.scheduler();
         getLogger().info("FoOrders scheduler mode: " + (schedulerAdapter.isFolia() ? "Folia-compatible bridge" : "Bukkit scheduler"));
         core.warnIfNativeDialogsUnavailable();
@@ -210,14 +216,37 @@ public final class FoOrders extends JavaPlugin {
         }
 
         boolean changed = false;
+        List<String> missingSections = new ArrayList<>();
         for (String key : defaults.getKeys(true)) {
-            if (defaults.isConfigurationSection(key) || config.isSet(key)) {
+            if (config.isSet(key)) {
+                continue;
+            }
+            if (defaults.isConfigurationSection(key)) {
+                missingSections.add(key);
                 continue;
             }
             config.set(key, defaults.get(key));
+            copyDefaultComments(config, defaults, key);
             changed = true;
         }
+        for (String section : missingSections) {
+            // The section now exists because one of its keys was written above.
+            if (config.isSet(section)) {
+                copyDefaultComments(config, defaults, section);
+            }
+        }
         return changed;
+    }
+
+    private void copyDefaultComments(FileConfiguration config, Configuration defaults, String key) {
+        List<String> comments = defaults.getComments(key);
+        if (!comments.isEmpty()) {
+            config.setComments(key, comments);
+        }
+        List<String> inlineComments = defaults.getInlineComments(key);
+        if (!inlineComments.isEmpty()) {
+            config.setInlineComments(key, inlineComments);
+        }
     }
 
     private boolean setDefaultIfMissing(FileConfiguration config, String path, Object value) {

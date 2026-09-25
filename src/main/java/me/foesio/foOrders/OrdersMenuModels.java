@@ -129,34 +129,46 @@ record MainOrderView(UUID ownerId, String ownerName, PlayerDataStore.OrderEntry 
 record AdminOrderTarget(UUID ownerId, PlayerDataStore.PlayerData ownerData, PlayerDataStore.OrderEntry order) {
 }
 
-record NewOrderDraft(String customItemId, String materialName, int amount, double pricePerItem, Map<String, Integer> enchantLevels) {
+record NewOrderDraft(
+    String customItemId,
+    String materialName,
+    int amount,
+    double pricePerItem,
+    Map<String, Integer> enchantLevels,
+    String currencyId
+) {
     NewOrderDraft {
         customItemId = customItemId == null || customItemId.isBlank() ? null : customItemId.trim().toLowerCase(Locale.ROOT);
         enchantLevels = enchantLevels == null ? Map.of() : new LinkedHashMap<>(enchantLevels);
+        currencyId = currencyId == null || currencyId.isBlank() ? null : currencyId.trim().toLowerCase(Locale.ROOT);
     }
 
     static NewOrderDraft defaults() {
-        return new NewOrderDraft(null, Material.STONE.name(), 1, 1, Map.of());
+        return new NewOrderDraft(null, Material.STONE.name(), 1, 1, Map.of(), null);
     }
 
     NewOrderDraft withMaterialName(String newMaterialName) {
-        return new NewOrderDraft(null, newMaterialName, amount, pricePerItem, enchantLevels());
+        return new NewOrderDraft(null, newMaterialName, amount, pricePerItem, enchantLevels(), currencyId);
     }
 
     NewOrderDraft withSelection(String newCustomItemId, String newMaterialName) {
-        return new NewOrderDraft(newCustomItemId, newMaterialName, amount, pricePerItem, enchantLevels());
+        return new NewOrderDraft(newCustomItemId, newMaterialName, amount, pricePerItem, enchantLevels(), currencyId);
     }
 
     NewOrderDraft withAmount(int newAmount) {
-        return new NewOrderDraft(customItemId, materialName, newAmount, pricePerItem, enchantLevels());
+        return new NewOrderDraft(customItemId, materialName, newAmount, pricePerItem, enchantLevels(), currencyId);
     }
 
     NewOrderDraft withPricePerItem(double newPricePerItem) {
-        return new NewOrderDraft(customItemId, materialName, amount, newPricePerItem, enchantLevels());
+        return new NewOrderDraft(customItemId, materialName, amount, newPricePerItem, enchantLevels(), currencyId);
     }
 
     NewOrderDraft withEnchantLevels(Map<String, Integer> newEnchantLevels) {
-        return new NewOrderDraft(customItemId, materialName, amount, pricePerItem, new LinkedHashMap<>(newEnchantLevels));
+        return new NewOrderDraft(customItemId, materialName, amount, pricePerItem, new LinkedHashMap<>(newEnchantLevels), currencyId);
+    }
+
+    NewOrderDraft withCurrencyId(String newCurrencyId) {
+        return new NewOrderDraft(customItemId, materialName, amount, pricePerItem, enchantLevels(), newCurrencyId);
     }
 }
 

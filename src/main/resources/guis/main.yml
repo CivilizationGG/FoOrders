@@ -94,13 +94,17 @@ items:
   empty-order-slot:
     material: LIGHT_GRAY_STAINED_GLASS_PANE
     name: ""
+  # Placeholders: {owner}, {item}, {material}, {amount}, {amount_ordered}, {delivered}, {amount_delivered},
+  # {amount_left}, {price}, {price_each}, {total}, {paid}, {paid_left}, {currency}.
+  # Money placeholders already include the order's currency format from config.yml ("$10" or "10 Coins").
+  # Use {price_raw}, {total_raw}, {paid_raw} or {paid_left_raw} for the bare number.
   order-entry:
     name: "{theme}{owner}'s Order"
     lore:
       amount: "{theme}{amount} #ffffff{item}"
-      price: "{theme}${price} #ffffffeach"
+      price: "{theme}{price} #ffffffeach"
       delivered: "#a7b8b0{delivered}/#3ecf8e{amount} #a7b8b0Delivered"
-      paid: "#a7b8b0${paid}/#3ecf8e${total} #a7b8b0Paid"
+      paid: "#a7b8b0{paid}/#3ecf8e{total} #a7b8b0Paid"
   previous-page:
     slot: 45
   next-page:

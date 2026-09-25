@@ -33,8 +33,10 @@ native-dialogs:
 
 actionbar:
   invalid-amount: "#ff5d73Invalid amount. Try again."
-  not-enough-money: "#ff5d73Not enough money. Try again."
+  not-enough-money: "#ff5d73Not enough {currency}. Try again."
   economy-error: "#ff5d73Economy unavailable. Try again later."
+  currency-unavailable: "#ff5d73{currency} is unavailable right now."
+  whole-number-price: "#ff5d73{currency} only accepts whole-number prices."
   order-cancelled: "#ff5d73Order was cancelled."
   order-blacklisted: "#ff5d73This item is blacklisted from orders."
   custom-item-missing: "#ff5d73That custom item no longer exists."
@@ -55,17 +57,20 @@ custom-items:
   save-failed: "{prefix}#ff5d73Could not save custom item: #a7b8b0{error}"
   saved: "{prefix}:emerald: #3ecf8eSaved custom item {theme}{id}#3ecf8e."
 
+# Money placeholders ({payout}, {price}, {total}, {amount} in refunded) already include the currency
+# format from config.yml, for example "$1.5K" or "1.5K Coins". Use {payout_raw}, {price_raw},
+# {total_raw} or {amount_raw} for the bare number and {currency} for the currency name.
 orders:
   max-orders: "{prefix}#ff5d73You can only have {theme}{amount} #ff5d73orders right now."
-  delivered: "{prefix}:emerald: Items {theme}Delivered#a7b8b0! You earned #3ecf8e${payout}"
+  delivered: "{prefix}:emerald: Items {theme}Delivered#a7b8b0! You earned #3ecf8e{payout}"
   owner-delivered: "{prefix}{theme}{player} #a7b8b0delivered {theme}{amount} #a7b8b0{item}"
   owner-filled: "{prefix}Your {theme}{item} #a7b8b0order was filled."
   cancelled: "{prefix}:redstone: #ff5d73Order was cancelled."
   deleted-self: "{prefix}Deleted your {theme}{order} #a7b8b0order."
   deleted-other: "{prefix}Deleted {theme}{owner}#a7b8b0's {theme}{order} #a7b8b0order."
   owner-deleted: "{prefix}#ff5d73Your {theme}{order} #ff5d73order was deleted by {theme}{admin}"
-  refunded: "{prefix}:gold_ingot: Refunded: #3ecf8e${amount}"
+  refunded: "{prefix}:gold_ingot: Refunded: #3ecf8e{amount}"
   cancelled-self-admin: "{prefix}Cancelled your {theme}{order} #a7b8b0order as admin."
   cancelled-other-admin: "{prefix}Cancelled {theme}{owner}#a7b8b0's {theme}{order} #a7b8b0order."
   owner-cancelled-admin: "{prefix}#ff5d73Your {theme}{order} #ff5d73order was cancelled by {theme}{admin}"
-  created-broadcast: "{prefix}:paper: {theme}{player} #a7b8b0created an order for {theme}{amount}x {item} #a7b8b0at {theme}${price} #a7b8b0per item ({theme}${total} #a7b8b0total)."
+  created-broadcast: "{prefix}:paper: {theme}{player} #a7b8b0created an order for {theme}{amount}x {item} #a7b8b0at {theme}{price} #a7b8b0per item ({theme}{total} #a7b8b0total)."

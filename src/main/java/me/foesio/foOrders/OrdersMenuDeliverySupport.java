@@ -2,6 +2,7 @@ package me.foesio.foOrders;
 
 import me.foesio.core.inventory.InventoryDepositService;
 import me.foesio.core.inventory.OverflowPolicy;
+import me.foesio.foOrders.economy.OrderCurrency;
 import me.foesio.foOrders.integration.DiscordWebhookNotifier;
 import me.foesio.core.scheduler.FoScheduler;
 import me.foesio.foOrders.storage.HistoryDataStore;
@@ -353,17 +354,18 @@ final class OrdersMenuDeliverySupport {
             manager.playSound(player, GUI_ERROR_SOUND);
         }
 
+        OrderCurrency currency = manager.currencyFor(liveOrder);
         double payout = acceptedAmount * liveOrder.getPricePerItem();
         if (payout > 0D) {
-            if (!hasEconomyProvider()) {
+            if (!hasEconomyProvider(currency)) {
                 manager.playSound(player, GUI_ERROR_SOUND);
                 returnPendingItems(player, submittedItems);
-                sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
+                sendErrorActionbar(player, manager.messages().get("actionbar.currency-unavailable", PluginMessages.placeholders("currency", currency.displayName())));
                 openOrdersMenu(player, null);
                 return;
             }
 
-            if (!depositEconomy(player, payout)) {
+            if (!depositEconomy(player, currency, payout)) {
                 manager.playSound(player, GUI_ERROR_SOUND);
                 returnPendingItems(player, submittedItems);
                 sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
@@ -417,6 +419,7 @@ final class OrdersMenuDeliverySupport {
 
             String ownerName = resolvePlayerName(activePending.ownerId());
             String itemName = formatOrderDisplayName(liveOrder);
+            String payoutPlain = manager.formatAmountPlain(currency, payout);
             appendOrderHistory(
                 activePending.ownerId(),
                 "Order Delivered",
@@ -426,17 +429,21 @@ final class OrdersMenuDeliverySupport {
                 delivererId,
                 "Delivery Completed",
                 "Delivered " + formatCompactAmount(acceptedAmount) + "x " + itemName
-                    + " to " + ownerName + " and earned $" + formatCompactAmount(payout)
+                    + " to " + ownerName + " and earned " + payoutPlain
             );
             manager.fileLogger().info(
                 "Player " + player.getName() + " delivered "
                     + formatCompactAmount(acceptedAmount) + "x " + itemName
                     + " to order " + liveOrder.getOrderId()
-                    + " and earned $" + formatCompactAmount(payout) + "."
+                    + " and earned " + payoutPlain + "."
             );
             sendOrderDeliveredWebhook(player, ownerName, liveOrder, acceptedAmount, payout);
             manager.playSound(player, ORDER_DELIVERED_SOUND);
-            manager.messages().send(player, "orders.delivered", PluginMessages.placeholders("payout", formatCompactAmount(payout)));
+            manager.messages().send(player, "orders.delivered", PluginMessages.placeholders(
+                "payout", manager.formatAmount(currency, payout),
+                "payout_raw", formatCompactAmount(payout),
+                "currency", currency.displayName()
+            ));
             Player orderOwner = Bukkit.getPlayer(activePending.ownerId());
             if (orderOwner != null && orderOwner.isOnline()) {
                 manager.playSound(orderOwner, ORDER_DELIVERED_SOUND);
@@ -581,23 +588,25 @@ final class OrdersMenuDeliverySupport {
                 return;
             }
 
+            OrderCurrency currency = manager.currencyFor(selectedOrder);
             double refundedAmount = getRemainingOrderFunds(selectedOrder);
             if (!refundRemainingOrderFunds(player.getUniqueId(), selectedOrder)) {
-                sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
+                sendErrorActionbar(player, refundFailureMessage(currency));
                 return;
             }
 
             selectedOrder.setCancelled(true);
             sendErrorActionbar(player, manager.messages().get("actionbar.order-cancelled"));
             manager.messages().send(player, "orders.cancelled");
+            String refundPlain = manager.formatAmountPlain(currency, refundedAmount);
             appendOrderHistory(
                 player.getUniqueId(),
                 "Order Cancelled",
-                formatOrderDisplayName(selectedOrder) + " refunded $" + formatCompactAmount(refundedAmount)
+                formatOrderDisplayName(selectedOrder) + " refunded " + refundPlain
             );
             manager.fileLogger().info(
                 "Player " + player.getName() + " cancelled order " + selectedOrder.getOrderId()
-                    + " with refund $" + formatCompactAmount(refundedAmount) + "."
+                    + " with refund " + refundPlain + "."
             );
             boolean removed = removeOrderIfCompleted(playerData, viewState);
             playerDataStore.saveUrgent(player.getUniqueId());
@@ -630,9 +639,10 @@ final class OrdersMenuDeliverySupport {
             target = new AdminOrderTarget(target.ownerId(), ownerData, liveOrder);
 
             boolean selfModeration = target.ownerId().equals(player.getUniqueId());
+            OrderCurrency currency = manager.currencyFor(target.order());
             double remainingFunds = target.order().isCancelled() ? 0D : getRemainingOrderFunds(target.order());
             if (remainingFunds > 0D && !refundRemainingOrderFunds(target.ownerId(), target.order())) {
-                sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
+                sendErrorActionbar(player, refundFailureMessage(currency));
                 return;
             }
 
@@ -645,16 +655,17 @@ final class OrdersMenuDeliverySupport {
 
             String ownerName = resolvePlayerName(target.ownerId());
             String orderName = formatOrderDisplayName(target.order());
+            String refundPlain = manager.formatAmountPlain(currency, remainingFunds);
             playerDataStore.saveUrgent(target.ownerId());
             appendOrderHistory(
                 target.ownerId(),
                 "Order Deleted by Admin",
-                player.getName() + " deleted " + orderName + " (Refund $" + formatCompactAmount(remainingFunds) + ")"
+                player.getName() + " deleted " + orderName + " (Refund " + refundPlain + ")"
             );
             manager.fileLogger().info(
                 "Admin " + player.getName() + " deleted order " + target.order().getOrderId()
                     + " owned by " + ownerName
-                    + " with refund $" + formatCompactAmount(remainingFunds) + "."
+                    + " with refund " + refundPlain + "."
             );
             sendAdminOrderDeletedWebhook(player, ownerName, target.order(), remainingFunds);
             manager.playSound(player, ORDER_ADMIN_DELETED_SOUND);
@@ -675,7 +686,7 @@ final class OrdersMenuDeliverySupport {
                     "admin", player.getName()
                 ));
                 if (remainingFunds > 0D) {
-                    manager.messages().send(owner, "orders.refunded", PluginMessages.placeholders("amount", formatCompactAmount(remainingFunds)));
+                    manager.messages().send(owner, "orders.refunded", refundPlaceholders(currency, remainingFunds));
                 }
             }
             openOrdersMenu(player, null);
@@ -702,9 +713,10 @@ final class OrdersMenuDeliverySupport {
             }
 
             boolean selfModeration = target.ownerId().equals(player.getUniqueId());
+            OrderCurrency currency = manager.currencyFor(target.order());
             double remainingFunds = getRemainingOrderFunds(target.order());
             if (!refundRemainingOrderFunds(target.ownerId(), target.order())) {
-                sendErrorActionbar(player, manager.messages().get("actionbar.economy-error"));
+                sendErrorActionbar(player, refundFailureMessage(currency));
                 return false;
             }
 
@@ -713,15 +725,16 @@ final class OrdersMenuDeliverySupport {
 
             String ownerName = resolvePlayerName(target.ownerId());
             String orderName = formatOrderDisplayName(target.order());
+            String refundPlain = manager.formatAmountPlain(currency, remainingFunds);
             appendOrderHistory(
                 target.ownerId(),
                 "Order Cancelled by Admin",
-                player.getName() + " cancelled " + orderName + " (Refund $" + formatCompactAmount(remainingFunds) + ")"
+                player.getName() + " cancelled " + orderName + " (Refund " + refundPlain + ")"
             );
             manager.fileLogger().info(
                 "Admin " + player.getName() + " cancelled order " + target.order().getOrderId()
                     + " owned by " + ownerName
-                    + " with refund $" + formatCompactAmount(remainingFunds) + "."
+                    + " with refund " + refundPlain + "."
             );
             sendAdminOrderCancelledWebhook(player, ownerName, target.order(), remainingFunds);
             manager.playSound(player, ORDER_ADMIN_CANCELLED_SOUND);
@@ -742,7 +755,7 @@ final class OrdersMenuDeliverySupport {
                     "admin", player.getName()
                 ));
                 if (remainingFunds > 0D) {
-                    manager.messages().send(owner, "orders.refunded", PluginMessages.placeholders("amount", formatCompactAmount(remainingFunds)));
+                    manager.messages().send(owner, "orders.refunded", refundPlaceholders(currency, remainingFunds));
                 }
             }
             return true;
@@ -752,6 +765,7 @@ final class OrdersMenuDeliverySupport {
     }
 
     void sendOrderCreatedWebhook(Player player, PlayerDataStore.OrderEntry order, double totalCost) {
+        OrderCurrency currency = manager.currencyFor(order);
         discordWebhookNotifier.sendEmbed(
             DiscordWebhookNotifier.WebhookCategory.CREATING,
             "New Order Created",
@@ -761,8 +775,9 @@ final class OrdersMenuDeliverySupport {
                 webhookField("Player", player.getName(), true),
                 webhookField("Item", formatOrderDisplayName(order), true),
                 webhookField("Amount", formatCompactAmount(order.getAmountOrdered()), true),
-                webhookField("Price Each", "$" + formatCompactAmount(order.getPricePerItem()), true),
-                webhookField("Total", "$" + formatCompactAmount(totalCost), true),
+                webhookField("Price Each", manager.formatAmountPlain(currency, order.getPricePerItem()), true),
+                webhookField("Total", manager.formatAmountPlain(currency, totalCost), true),
+                webhookField("Currency", currency.displayName(), true),
                 webhookField("Order ID", order.getOrderId(), false)
             )
         );
@@ -773,12 +788,16 @@ final class OrdersMenuDeliverySupport {
             return;
         }
 
-        Bukkit.broadcast(manager.messages().get("orders.created-broadcast", Map.of(
+        OrderCurrency currency = manager.currencyFor(order);
+        Bukkit.broadcast(manager.messages().get("orders.created-broadcast", PluginMessages.placeholders(
             "player", player.getName(),
             "amount", formatCompactAmount(order.getAmountOrdered()),
             "item", formatOrderDisplayName(order),
-            "price", formatCompactAmount(order.getPricePerItem()),
-            "total", formatCompactAmount(totalCost)
+            "price", manager.formatAmount(currency, order.getPricePerItem()),
+            "price_raw", formatCompactAmount(order.getPricePerItem()),
+            "total", manager.formatAmount(currency, totalCost),
+            "total_raw", formatCompactAmount(totalCost),
+            "currency", currency.displayName()
         )), CREATED_ORDER_ANNOUNCEMENTS_PERMISSION);
     }
 
@@ -791,7 +810,7 @@ final class OrdersMenuDeliverySupport {
             List.of(
                 webhookField("Player", player.getName(), true),
                 webhookField("Item", formatOrderDisplayName(order), true),
-                webhookField("Refunded", "$" + formatCompactAmount(refundedAmount), true),
+                webhookField("Refunded", manager.formatAmountPlain(manager.currencyFor(order), refundedAmount), true),
                 webhookField("Progress", buildOrderProgress(order), true),
                 webhookField("Claimable", formatCompactAmount(order.getAmountClaimable()), true),
                 webhookField("Order ID", order.getOrderId(), false)
@@ -816,7 +835,7 @@ final class OrdersMenuDeliverySupport {
                 webhookField("Order Owner", ownerName, true),
                 webhookField("Item", formatOrderDisplayName(order), true),
                 webhookField("Delivered Now", formatCompactAmount(deliveredAmount), true),
-                webhookField("Payout", "$" + formatCompactAmount(payout), true),
+                webhookField("Payout", manager.formatAmountPlain(manager.currencyFor(order), payout), true),
                 webhookField("Progress", buildOrderProgress(order), true),
                 webhookField("Order ID", order.getOrderId(), false)
             )
@@ -855,7 +874,7 @@ final class OrdersMenuDeliverySupport {
                 webhookField("Admin", admin.getName(), true),
                 webhookField("Order Owner", ownerName, true),
                 webhookField("Item", formatOrderDisplayName(order), true),
-                webhookField("Refunded", "$" + formatCompactAmount(refundedAmount), true),
+                webhookField("Refunded", manager.formatAmountPlain(manager.currencyFor(order), refundedAmount), true),
                 webhookField("Progress", buildOrderProgress(order), true),
                 webhookField("Order ID", order.getOrderId(), false)
             )
@@ -877,7 +896,7 @@ final class OrdersMenuDeliverySupport {
                 webhookField("Admin", admin.getName(), true),
                 webhookField("Order Owner", ownerName, true),
                 webhookField("Item", formatOrderDisplayName(order), true),
-                webhookField("Refunded", "$" + formatCompactAmount(refundedAmount), true),
+                webhookField("Refunded", manager.formatAmountPlain(manager.currencyFor(order), refundedAmount), true),
                 webhookField("Progress", buildOrderProgress(order), true),
                 webhookField("Order ID", order.getOrderId(), false)
             )
@@ -917,33 +936,33 @@ final class OrdersMenuDeliverySupport {
         return transferRemainingOrderFunds(ownerId, order, false);
     }
 
-    boolean hasEconomyProvider() {
+    boolean hasEconomyProvider(OrderCurrency currency) {
         synchronized (economyLock) {
-            return manager.economy != null && manager.economy.isAvailable();
+            return currency != null && currency.isAvailable();
         }
     }
 
-    boolean hasEconomyBalance(OfflinePlayer player, double amount) {
+    boolean hasEconomyBalance(OfflinePlayer player, OrderCurrency currency, double amount) {
         synchronized (economyLock) {
-            return manager.economy != null && manager.economy.isAvailable() && manager.economy.has(player, amount);
+            return currency != null && currency.isAvailable() && currency.has(player, amount);
         }
     }
 
-    boolean withdrawEconomy(OfflinePlayer player, double amount) {
+    boolean withdrawEconomy(OfflinePlayer player, OrderCurrency currency, double amount) {
         synchronized (economyLock) {
-            if (manager.economy == null || !manager.economy.isAvailable()) {
+            if (currency == null || !currency.isAvailable()) {
                 return false;
             }
-            return manager.economy.withdraw(player, amount);
+            return currency.withdraw(player, amount);
         }
     }
 
-    boolean depositEconomy(OfflinePlayer player, double amount) {
+    boolean depositEconomy(OfflinePlayer player, OrderCurrency currency, double amount) {
         synchronized (economyLock) {
-            if (manager.economy == null || !manager.economy.isAvailable()) {
+            if (currency == null || !currency.isAvailable()) {
                 return false;
             }
-            return manager.economy.deposit(player, amount);
+            return currency.deposit(player, amount);
         }
     }
 
@@ -952,15 +971,35 @@ final class OrdersMenuDeliverySupport {
         if (remainingFunds <= 0D) {
             return true;
         }
-        if (!hasEconomyProvider()) {
+        OrderCurrency currency = manager.currencyFor(order);
+        if (!hasEconomyProvider(currency)) {
+            manager.fileLogger().warn(
+                "Cannot " + (refund ? "refund" : "reserve") + " " + manager.formatAmountPlain(currency, remainingFunds)
+                    + " for order " + order.getOrderId() + ": currency '" + currency.id() + "' is unavailable."
+            );
             return false;
         }
 
         OfflinePlayer owner = Bukkit.getOfflinePlayer(ownerId);
         boolean successful = refund
-            ? depositEconomy(owner, remainingFunds)
-            : withdrawEconomy(owner, remainingFunds);
+            ? depositEconomy(owner, currency, remainingFunds)
+            : withdrawEconomy(owner, currency, remainingFunds);
         return successful;
+    }
+
+    private String refundFailureMessage(OrderCurrency currency) {
+        if (currency != null && !currency.isAvailable()) {
+            return manager.messages().get("actionbar.currency-unavailable", PluginMessages.placeholders("currency", currency.displayName()));
+        }
+        return manager.messages().get("actionbar.economy-error");
+    }
+
+    private Map<String, String> refundPlaceholders(OrderCurrency currency, double amount) {
+        return PluginMessages.placeholders(
+            "amount", manager.formatAmount(currency, amount),
+            "amount_raw", formatCompactAmount(amount),
+            "currency", currency.displayName()
+        );
     }
 
     boolean isAdminOrderModerationClick(Player player, ClickType clickType) {

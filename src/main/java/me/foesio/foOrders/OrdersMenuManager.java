@@ -13,6 +13,8 @@ import me.foesio.core.sound.FoSoundService;
 import me.foesio.foOrders.integration.DiscordWebhookNotifier;
 import me.foesio.foOrders.config.GuiConfigManager;
 import me.foesio.foOrders.dialog.FoOrdersDialogInputService;
+import me.foesio.foOrders.economy.OrderCurrency;
+import me.foesio.foOrders.economy.OrderCurrencyRegistry;
 import me.foesio.foOrders.storage.CustomItemStore;
 import me.foesio.foOrders.storage.HistoryDataStore;
 import me.foesio.foOrders.storage.PlayerDataStore;
@@ -132,6 +134,7 @@ public final class OrdersMenuManager implements Listener {
     static final int MAIN_NEXT_SLOT = 53;
 
     static final int CANCEL_SLOT = 10;
+    static final int CURRENCY_SLOT = 11;
     static final int ITEM_SLOT = 12;
     static final int AMOUNT_SLOT = 13;
     static final int PRICE_SLOT = 14;
@@ -245,6 +248,7 @@ public final class OrdersMenuManager implements Listener {
     final Set<String> activeOrderOperationLocks = ConcurrentHashMap.newKeySet();
     final Set<UUID> waitingDeliveryPlayers = ConcurrentHashMap.newKeySet();
     final Object economyLock = new Object();
+    final OrderCurrencyRegistry currencies = new OrderCurrencyRegistry();
     volatile Set<Material> blacklistedOrderMaterials = Set.of();
     volatile Set<String> blacklistedOrderNames = Set.of();
     volatile VaultEconomyBridge economy;
@@ -389,6 +393,56 @@ public final class OrdersMenuManager implements Listener {
         synchronized (economyLock) {
             this.economy = economy;
         }
+        reloadCurrencies();
+    }
+
+    /**
+     * Rebuilds the currency registry from config and the current Vault bridge.
+     * Runs after the economy hook is (re)loaded and after runtime config reloads.
+     */
+    void reloadCurrencies() {
+        synchronized (economyLock) {
+            currencies.reload(
+                plugin.getConfig().getConfigurationSection(OrderCurrencyRegistry.CONFIG_PATH),
+                economy,
+                messages::themeColor,
+                plugin.getLogger(),
+                fileLogger
+            );
+        }
+        List<String> selectableIds = new ArrayList<>();
+        for (OrderCurrency currency : currencies.selectable()) {
+            selectableIds.add(currency.id());
+        }
+        fileLogger.info("Order currencies loaded. Selectable: " + selectableIds + ".");
+    }
+
+    OrderCurrencyRegistry currencies() {
+        return currencies;
+    }
+
+    /** The currency an existing order is priced in (never null). */
+    OrderCurrency currencyFor(PlayerDataStore.OrderEntry order) {
+        return currencies.resolve(order == null ? null : order.getCurrency());
+    }
+
+    /** The currency a draft will be charged in, falling back to the default when its choice is no longer selectable. */
+    OrderCurrency resolveDraftCurrency(NewOrderDraft draft) {
+        OrderCurrency selected = draft == null ? null : currencies.selectable(draft.currencyId());
+        return selected != null ? selected : currencies.defaultCurrency();
+    }
+
+    double orderTaxPercentage(OrderCurrency currency) {
+        double override = currency == null ? -1D : currency.taxPercentage();
+        return override >= 0D ? override : orderTaxPercentage;
+    }
+
+    String formatAmount(OrderCurrency currency, double value) {
+        return currency.format(itemSupport.formatCompactAmount(value));
+    }
+
+    String formatAmountPlain(OrderCurrency currency, double value) {
+        return currency.formatPlain(itemSupport.formatCompactAmount(value));
     }
 
 
@@ -522,19 +576,31 @@ public final class OrdersMenuManager implements Listener {
 
         reloadOrderBlacklistsFromConfig();
         discordWebhookNotifier.reloadFromConfig(plugin.getConfig());
+        if (economy != null) {
+            // Before the economy hook ran there is nothing to resolve yet; setEconomy() reloads then.
+            reloadCurrencies();
+        }
         fileLogger.info("Runtime config reload completed.");
     }
 
-    double calculateOrderTax(double subtotal) {
-        if (subtotal <= 0D || !Double.isFinite(subtotal) || orderTaxPercentage <= 0D) {
+    double calculateOrderTax(OrderCurrency currency, double subtotal) {
+        double percentage = orderTaxPercentage(currency);
+        if (subtotal <= 0D || !Double.isFinite(subtotal) || percentage <= 0D) {
             return 0D;
         }
-        double tax = subtotal * orderTaxPercentage / 100D;
-        return Double.isFinite(tax) && tax > 0D ? tax : 0D;
+        double tax = subtotal * percentage / 100D;
+        if (!Double.isFinite(tax) || tax <= 0D) {
+            return 0D;
+        }
+        if (currency != null && !currency.decimal()) {
+            // Whole-number currencies cannot hold a fractional tax.
+            tax = Math.round(tax);
+        }
+        return tax > 0D ? tax : 0D;
     }
 
-    double calculateOrderCreationCost(double subtotal) {
-        double total = subtotal + calculateOrderTax(subtotal);
+    double calculateOrderCreationCost(OrderCurrency currency, double subtotal) {
+        double total = subtotal + calculateOrderTax(currency, subtotal);
         return Double.isFinite(total) ? total : Double.NaN;
     }
 

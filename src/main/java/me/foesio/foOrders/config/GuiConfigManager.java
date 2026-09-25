@@ -37,6 +37,9 @@ public final class GuiConfigManager {
     // later config migrations cannot accidentally skip this split.
     private static final int GUI_SPLIT_MIGRATION_VERSION = 10;
     private static final int GUI_BUTTON_SPRITE_MIGRATION_VERSION = 11;
+    // Must run after the split (10) so the per-GUI files exist, and before the
+    // messages.yml currency migration (14) that FoOrders runs right after reload().
+    private static final int GUI_CURRENCY_PLACEHOLDER_MIGRATION_VERSION = 13;
     private static final Map<String, String> PUBLIC_GUI_FILES = Map.ofEntries(
         Map.entry("main", "guis/main.yml"),
         Map.entry("your-orders", "guis/your-orders.yml"),
@@ -101,6 +104,7 @@ public final class GuiConfigManager {
         clearCaches();
         migrations.runToVersion(GUI_SPLIT_MIGRATION_VERSION, this::migrateLegacyAggregate);
         migrations.runToVersion(GUI_BUTTON_SPRITE_MIGRATION_VERSION, this::migrateDefaultBackAndSearchSprites);
+        migrations.runToVersion(GUI_CURRENCY_PLACEHOLDER_MIGRATION_VERSION, this::migrateCurrencyPlaceholders);
 
         YamlConfiguration loaded = new YamlConfiguration();
         Map<String, GuiButtonConfig> loadedButtons = new LinkedHashMap<>();
@@ -586,6 +590,70 @@ public final class GuiConfigManager {
                 loaded.save(targetFile);
             } catch (IOException exception) {
                 warn("Could not migrate default button sprites in " + resourcePath + ".");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Money placeholders now carry the order currency's format, so a literal "$"
+     * written in front of them in older GUI files would render as "$$100".
+     * Strips that symbol from every string and string list in the public GUI files.
+     */
+    private boolean migrateCurrencyPlaceholders() {
+        for (String resourcePath : PUBLIC_GUI_FILES.values()) {
+            File targetFile = new File(plugin.getDataFolder(), resourcePath);
+            if (!targetFile.isFile()) {
+                continue;
+            }
+
+            YamlConfiguration loaded = YamlConfiguration.loadConfiguration(targetFile);
+            boolean changed = false;
+            for (String key : loaded.getKeys(true)) {
+                if (loaded.isConfigurationSection(key)) {
+                    continue;
+                }
+                if (loaded.isString(key)) {
+                    String current = loaded.getString(key, "");
+                    String migrated = PluginMessages.stripCurrencySymbols(current);
+                    if (!current.equals(migrated)) {
+                        loaded.set(key, migrated);
+                        changed = true;
+                    }
+                    continue;
+                }
+                if (loaded.isList(key)) {
+                    List<?> current = loaded.getList(key);
+                    if (current == null || current.isEmpty()) {
+                        continue;
+                    }
+                    boolean listChanged = false;
+                    List<Object> migrated = new ArrayList<>(current.size());
+                    for (Object value : current) {
+                        if (value instanceof String text) {
+                            String migratedText = PluginMessages.stripCurrencySymbols(text);
+                            migrated.add(migratedText);
+                            listChanged |= !text.equals(migratedText);
+                        } else {
+                            migrated.add(value);
+                        }
+                    }
+                    if (listChanged) {
+                        loaded.set(key, migrated);
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) {
+                continue;
+            }
+
+            try {
+                loaded.save(targetFile);
+                plugin.getLogger().info("Removed hard-coded $ signs before money placeholders in " + resourcePath + "; the currency format now comes from config.yml.");
+            } catch (IOException exception) {
+                warn("Could not migrate currency placeholders in " + resourcePath + ".");
                 return false;
             }
         }

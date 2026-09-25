@@ -5,6 +5,7 @@ api-version: '1.21'
 authors: [ Carrotio ]
 description: An actually well-made order system
 depend: [ Vault ]
+softdepend: [ ExcellentEconomy ]
 commands:
   order:
     description: Opens the orders menu
