@@ -45,7 +45,7 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
     private final Logger logger;
     private final String currencyId;
     private final Object api;
-    private final Object currency;
+    private final Method getCurrency;
     private final Method balanceSync;
     private final Method balanceAsync;
     private final Method depositSync;
@@ -58,7 +58,7 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
         Logger logger,
         String currencyId,
         Object api,
-        Object currency,
+        Method getCurrency,
         Method balanceSync,
         Method balanceAsync,
         Method depositSync,
@@ -70,7 +70,7 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
         this.logger = logger;
         this.currencyId = currencyId;
         this.api = api;
-        this.currency = currency;
+        this.getCurrency = getCurrency;
         this.balanceSync = balanceSync;
         this.balanceAsync = balanceAsync;
         this.depositSync = depositSync;
@@ -167,7 +167,7 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
             logger,
             normalizedId,
             api,
-            currency,
+            getCurrency,
             balanceSync,
             balanceAsync,
             depositSync,
@@ -184,8 +184,24 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
 
     @Override
     public boolean isAvailable() {
+        return liveCurrency() != null;
+    }
+
+    /**
+     * Looks the currency up on every operation instead of caching the object, so an
+     * ExcellentEconomy reload that re-creates or removes the currency is picked up.
+     * Returns null when ExcellentEconomy is disabled or the currency no longer exists.
+     */
+    private Object liveCurrency() {
         Plugin plugin = Bukkit.getPluginManager().getPlugin(PLUGIN_NAME);
-        return plugin != null && plugin.isEnabled();
+        if (plugin == null || !plugin.isEnabled()) {
+            return null;
+        }
+        try {
+            return getCurrency.invoke(api, currencyId);
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            return null;
+        }
     }
 
     @Override
@@ -201,7 +217,8 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
 
     @Override
     public boolean withdraw(OfflinePlayer player, double amount) {
-        if (player == null || !isAvailable() || !(amount > 0D) || !Double.isFinite(amount)) {
+        Object currency = liveCurrency();
+        if (player == null || currency == null || !(amount > 0D) || !Double.isFinite(amount)) {
             return false;
         }
         Player online = player.getPlayer();
@@ -222,7 +239,8 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
 
     @Override
     public boolean deposit(OfflinePlayer player, double amount) {
-        if (player == null || !isAvailable() || !(amount > 0D) || !Double.isFinite(amount)) {
+        Object currency = liveCurrency();
+        if (player == null || currency == null || !(amount > 0D) || !Double.isFinite(amount)) {
             return false;
         }
         Player online = player.getPlayer();
@@ -245,7 +263,8 @@ public final class ExcellentEconomyCurrencyProvider implements CurrencyProvider 
     }
 
     private Double balance(OfflinePlayer player) {
-        if (player == null || !isAvailable()) {
+        Object currency = liveCurrency();
+        if (player == null || currency == null) {
             return null;
         }
         Player online = player.getPlayer();
